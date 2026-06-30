@@ -51,9 +51,12 @@ def get_branch_list(session, repo_path):
 
         try:
             text = r.text
+            print(f"  [디버그] 원본 응답 앞 20자 (repr): {repr(text[:20])}")
             # Gerrit 계열 시스템은 XSSI 방지를 위해 응답 앞에 )]}' 를 붙임. 제거 후 파싱.
             if text.startswith(")]}'"):
                 text = text[4:].lstrip("\n")
+            elif text.lstrip().startswith(")]}'"):
+                text = text.lstrip()[4:].lstrip("\n")
             data = json.loads(text)
         except Exception as e:
             print(f"  JSON 파싱 실패: {e}. Response 일부:")

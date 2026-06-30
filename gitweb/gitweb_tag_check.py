@@ -35,17 +35,25 @@ def list_tags(session, repo_path):
     return tags
 
 def list_branches(session, repo_path):
-    """gitweb의 a=heads 페이지에서 브랜치 목록 조회"""
-    url = f"{GITWEB_BASE}/?p={repo_path};a=heads"
-    print(f"\n[요청] {url}")
-    r = session.get(url, verify=False, timeout=10)
-    print(f"  Status: {r.status_code}")
+    """gitweb에서 브랜치 목록 조회. a=heads, a=branches 둘 다 시도."""
+    for action in ["heads", "branches"]:
+        url = f"{GITWEB_BASE}/?p={repo_path};a={action}"
+        print(f"\n[요청] {url}")
+        r = session.get(url, verify=False, timeout=10)
+        print(f"  Status: {r.status_code}")
 
-    if r.status_code != 200:
-        return []
+        if r.status_code != 200:
+            continue
 
-    branches = re.findall(r'refs/heads/([^"\'?;]+)', r.text)
-    return sorted(set(branches))
+        branches = re.findall(r'refs/heads/([^"\'?;]+)', r.text)
+        branches = sorted(set(branches))
+        if branches:
+            print(f"  -> a={action} 에서 {len(branches)}개 발견")
+            return branches
+        else:
+            print(f"  -> a={action} 응답은 200이지만 브랜치 패턴 매칭 안됨")
+
+    return []
 
 def check_tag_exists(tags, keyword):
     """특정 키워드(예: project명, seq, 버전 등)가 포함된 태그가 있는지 확인"""

@@ -10,12 +10,17 @@ REPO_PATH = "Automotive/DBIO/v9/idcevo-manifest"   # admin/repos/ 뒤에 붙는 
 GITWEB_REPO_Q = "Automotive/DBIO/idcevo-manifest.git"  # gitweb ?q= 파라미터에 쓰이는 경로 (관찰된 값 기준, 다를 수 있음)
 USERNAME = "twitch.kim.partner.samsung.com"
 PASSWORD = ""   # 여기에 직접 입력해서 사용하세요 (코드에 그대로 두고 공유/업로드 금지)
+SESSION_COOKIE = ""  # 브라우저에서 복사한 전체 쿠키 문자열을 여기에 직접 입력 (공유/업로드 금지)
 PAGE_SIZE = 26
 # ==========================
 
 def get_session():
     s = requests.Session()
     s.auth = HTTPBasicAuth(USERNAME, PASSWORD)
+    headers = {"Accept": "application/json"}
+    if SESSION_COOKIE:
+        headers["Cookie"] = SESSION_COOKIE
+    s.headers.update(headers)
     return s
 
 def get_branch_list(session, repo_path):

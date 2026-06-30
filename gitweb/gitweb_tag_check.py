@@ -40,6 +40,9 @@ def get_branch_list(session, repo_path):
         print(f"[요청] {url}")
         r = session.get(url, verify=False, timeout=10)
         print(f"  Status: {r.status_code}")
+        print(f"  [디버그] 보낸 요청 헤더: {dict(r.request.headers)}")
+        print(f"  [디버그] 응답 Content-Type: {r.headers.get('Content-Type')}")
+        print(f"  [디버그] 응답 헤더 전체: {dict(r.headers)}")
 
         if r.status_code != 200:
             print(f"  실패. Response 일부: {r.text[:300]}")

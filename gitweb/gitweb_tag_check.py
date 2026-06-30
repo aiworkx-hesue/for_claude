@@ -3,12 +3,12 @@ from requests.auth import HTTPBasicAuth
 import re
 import json
 import urllib3
+from urllib.parse import quote
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ========== 설정 ==========
 BASE_URL = "http://10.166.211.148:8084"
-REPO_PATH = "Automotive/DBIO/v9/idcevo-manifest"   # admin/repos/ 뒤에 붙는 경로
-GITWEB_REPO_Q = "Automotive/DBIO/idcevo-manifest.git"  # gitweb ?q= 파라미터에 쓰이는 경로 (관찰된 값 기준, 다를 수 있음)
+REPO_PATH = "Automotive/DBIO/v9/idcevo-manifest"   # 실제 레포 경로 (슬래시 포함, 인코딩은 코드에서 처리)
 USERNAME = "twitch.kim.partner.samsung.com"
 PASSWORD = ""   # 여기에 직접 입력해서 사용하세요 (코드에 그대로 두고 공유/업로드 금지)
 SESSION_COOKIE = ""  # 브라우저에서 복사한 전체 쿠키 문자열을 여기에 직접 입력 (공유/업로드 금지)
@@ -20,41 +20,35 @@ def get_session():
     headers = {
         "Accept": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Referer": f"{BASE_URL}/admin/repos/{REPO_PATH}",
-        "X-Requested-With": "XMLHttpRequest",
     }
     if SESSION_COOKIE:
         headers["Cookie"] = SESSION_COOKIE
     s.headers.update(headers)
-    # Basic Auth는 쿠키 기반 세션과 충돌할 수 있어 우선 제외.
-    # 그래도 안 되면 아래 줄 주석 해제해서 같이 시도해볼 것:
-    # s.auth = HTTPBasicAuth(USERNAME, PASSWORD)
     return s
 
+def strip_xssi_prefix(text):
+    """Gerrit REST API는 응답 앞에 )]}' (줄바꿈 포함될 수 있음) 를 붙임"""
+    return re.sub(r"^\)\s*\]\s*\}\s*'\s*", "", text)
+
 def get_branch_list(session, repo_path):
-    """,branches?n=26&S=0 페이지네이션으로 전체 브랜치명 + shortlog URL 수집"""
-    branches = {}  # {브랜치명: shortlog_url}
+    """/projects/{encoded}/branches?n=26&S=0 페이지네이션으로 전체 브랜치 수집"""
+    branches = {}  # {브랜치명: ref}
     start = 0
+    encoded_repo = quote(repo_path, safe="")
 
     while True:
-        url = f"{BASE_URL}/admin/repos/{repo_path},branches?n={PAGE_SIZE}&S={start}"
+        url = f"{BASE_URL}/projects/{encoded_repo}/branches?n={PAGE_SIZE}&S={start}"
         print(f"[요청] {url}")
         r = session.get(url, verify=False, timeout=10)
         print(f"  Status: {r.status_code}")
-        print(f"  [디버그] 보낸 요청 헤더: {dict(r.request.headers)}")
         print(f"  [디버그] 응답 Content-Type: {r.headers.get('Content-Type')}")
-        print(f"  [디버그] 응답 헤더 전체: {dict(r.headers)}")
 
         if r.status_code != 200:
             print(f"  실패. Response 일부: {r.text[:300]}")
             break
 
         try:
-            text = r.text
-            print(f"  [디버그] 원본 응답 앞 30자 (repr): {repr(text[:30])}")
-            # Gerrit 계열은 XSSI 방지 prefix )]}' 를 붙이는데,
-            # 각 문자 사이에 줄바꿈이 끼어있는 경우도 있어 정규식으로 통째로 제거.
-            text = re.sub(r"^\)\s*\]\s*\}\s*'\s*", "", text)
+            text = strip_xssi_prefix(r.text)
             data = json.loads(text)
         except Exception as e:
             print(f"  JSON 파싱 실패: {e}. Response 일부:")
@@ -67,33 +61,11 @@ def get_branch_list(session, repo_path):
         for item in data:
             ref = item.get("ref", "")
             if ref == "HEAD":
-                continue  # HEAD 항목은 브랜치 자체가 아니므로 건너뜀
-
-            branch_name = None
-            shortlog_url = None
-
-            # 패턴 1: ref 값 자체가 'refs/heads/이름' 형태인 경우
+                continue
             m = re.match(r"refs/heads/(.+)", ref)
-            if m:
-                branch_name = m.group(1)
-
-            # web_links 안에서도 shortlog URL 추출 시도 (이름 백업용으로도 사용)
-            for link in item.get("web_links", []):
-                url_str = link.get("url", "")
-                full_url = url_str if url_str.startswith("http") else BASE_URL + url_str
-                if "a=shortlog" in url_str or "shortlog" in url_str:
-                    shortlog_url = full_url
-                if not branch_name:
-                    m2 = re.search(r"refs/heads/([^;\"&]+)", url_str)
-                    if m2:
-                        branch_name = m2.group(1)
-
-            # 패턴 2: ref가 그냥 브랜치 이름 자체인 경우 (refs/heads/ 접두어 없이)
-            if not branch_name and ref and ref != "HEAD":
-                branch_name = ref
-
+            branch_name = m.group(1) if m else ref
             if branch_name:
-                branches[branch_name] = shortlog_url
+                branches[branch_name] = ref
 
         if len(data) < PAGE_SIZE:
             break
@@ -101,36 +73,49 @@ def get_branch_list(session, repo_path):
 
     return branches
 
-def get_tags_from_shortlog(session, shortlog_url):
-    """shortlog 페이지 HTML에서 태그 라벨 추출"""
-    print(f"  [shortlog 요청] {shortlog_url}")
-    r = session.get(shortlog_url, verify=False, timeout=10)
+def get_tags(session, repo_path):
+    """/projects/{encoded}/tags?n=26&S=0 페이지네이션으로 전체 태그 수집"""
+    tags = {}  # {태그명: revision}
+    start = 0
+    encoded_repo = quote(repo_path, safe="")
 
-    if r.status_code != 200:
-        print(f"    실패 (status {r.status_code})")
-        return []
+    while True:
+        url = f"{BASE_URL}/projects/{encoded_repo}/tags?n={PAGE_SIZE}&S={start}"
+        print(f"[요청] {url}")
+        r = session.get(url, verify=False, timeout=10)
+        print(f"  Status: {r.status_code}")
 
-    # gitweb은 보통 <span class="refs"> ... <span class="tag-deco">TAGNAME</span> ... </span> 형태로 표시함
-    # 우선 넓게 "tag" 관련 class 안의 텍스트를 긁어봄
-    tags = re.findall(r'class="[^"]*tag[^"]*"[^>]*>\s*([^<]+?)\s*<', r.text)
-    tags = sorted(set(t.strip() for t in tags if t.strip()))
-    return tags, r.text
+        if r.status_code != 200:
+            print(f"  실패. Response 일부: {r.text[:300]}")
+            break
 
-def check_branch_tag(session, branch_name, shortlog_url):
-    print(f"\n[브랜치] {branch_name}")
-    tags, html = get_tags_from_shortlog(session, shortlog_url)
-    if tags:
-        print(f"  ✅ 태그 발견 {len(tags)}개:")
-        for t in tags:
-            print(f"     - {t}")
-    else:
-        print("  ❌ 태그 라벨을 못 찾음 (패턴 안 맞을 수 있음, HTML 일부 출력)")
-        print("  ", html[:800].replace("\n", " "))
+        try:
+            text = strip_xssi_prefix(r.text)
+            data = json.loads(text)
+        except Exception as e:
+            print(f"  JSON 파싱 실패: {e}. Response 일부:")
+            print(r.text[:500])
+            break
+
+        if not data:
+            break
+
+        for item in data:
+            ref = item.get("ref", "")
+            m = re.match(r"refs/tags/(.+)", ref)
+            tag_name = m.group(1) if m else ref
+            if tag_name:
+                tags[tag_name] = item.get("revision", "")
+
+        if len(data) < PAGE_SIZE:
+            break
+        start += PAGE_SIZE
+
     return tags
 
 if __name__ == "__main__":
-    if not PASSWORD:
-        print("[경고] PASSWORD 변수가 비어있어요. 코드 상단에 직접 입력 후 실행하세요.")
+    if not PASSWORD and not SESSION_COOKIE:
+        print("[경고] PASSWORD 또는 SESSION_COOKIE 중 하나는 채워야 해요.")
     else:
         session = get_session()
 
@@ -143,12 +128,17 @@ if __name__ == "__main__":
         for name in branches:
             print(f"  - {name}")
 
-        target = input("\n태그를 확인할 브랜치명 입력 (정확히 입력): ").strip()
-        if target in branches:
-            if branches[target]:
-                check_branch_tag(session, target, branches[target])
+        tags = get_tags(session, REPO_PATH)
+        print(f"\n[태그 목록] 총 {len(tags)}개")
+        for name, rev in tags.items():
+            print(f"  - {name}  (revision: {rev})")
+
+        keyword = input("\n확인할 키워드(브랜치명 일부 등) 입력: ").strip()
+        if keyword:
+            matched = [t for t in tags if keyword.lower() in t.lower()]
+            if matched:
+                print(f"\n✅ '{keyword}' 포함 태그 {len(matched)}개 발견:")
+                for m in matched:
+                    print(f"  - {m}")
             else:
-                print(f"  '{target}'의 shortlog URL을 못 찾았어요. web_links 구조가 예상과 다를 수 있어요.")
-                print(f"  해당 브랜치 항목 원본을 확인하려면 디버그 출력이 필요해요.")
-        else:
-            print(f"'{target}' 브랜치를 목록에서 찾지 못했어요. 정확한 이름인지 확인해 주세요.")
+                print(f"\n❌ '{keyword}' 포함된 태그 없음 — 태깅 안 된 것으로 보여요.")

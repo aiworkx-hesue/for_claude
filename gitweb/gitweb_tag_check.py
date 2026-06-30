@@ -9,6 +9,7 @@ BASE_URL = "http://10.166.211.148:8084"
 REPO_PATH = "Automotive/DBIO/v9/idcevo-manifest"   # admin/repos/ 뒤에 붙는 경로
 USERNAME = "twitch.kim.partner.samsung.com"
 PASSWORD = ""   # 여기에 직접 입력해서 사용하세요 (코드에 그대로 두고 공유/업로드 금지)
+PAGE_SIZE = 26  # 관찰된 n=26 패턴
 # ==========================
 
 def get_session():
@@ -16,26 +17,55 @@ def get_session():
     s.auth = HTTPBasicAuth(USERNAME, PASSWORD)
     return s
 
-def list_refs(session, repo_path, ref_type):
-    """ref_type: 'branches' 또는 'tags'"""
-    url = f"{BASE_URL}/admin/repos/{repo_path},{ref_type}"
-    print(f"\n[요청] {url}")
-    r = session.get(url, verify=False, timeout=10)
-    print(f"  Status: {r.status_code}")
+def get_tags(session, repo_path):
+    """,tags?n=26&S=0 형태로 페이지네이션하며 전체 태그 수집"""
+    all_tags = []
+    start = 0
 
-    if r.status_code != 200:
-        print(f"  접속 실패. Response 일부: {r.text[:300]}")
-        return []
+    while True:
+        url = f"{BASE_URL}/admin/repos/{repo_path},tags?n={PAGE_SIZE}&S={start}"
+        print(f"[요청] {url}")
+        r = session.get(url, verify=False, timeout=10)
+        print(f"  Status: {r.status_code}")
 
-    # HTML 구조를 모르니 일단 넓게 텍스트/링크 패턴을 긁어봄
-    # 1) href 안에 ref 이름이 들어간 패턴
-    candidates = re.findall(r'href="[^"]*' + ref_type + r'[^"]*?/([^"/]+)"', r.text)
-    # 2) <td> 혹은 <span class="name">이름</span> 형태 (흔한 admin UI 패턴)
-    if not candidates:
-        candidates = re.findall(r'class="[^"]*name[^"]*"[^>]*>([^<]+)<', r.text)
+        if r.status_code != 200:
+            print(f"  실패. Response 일부: {r.text[:300]}")
+            break
 
-    candidates = sorted(set(c.strip() for c in candidates if c.strip()))
-    return candidates, r.text  # 원문도 같이 반환 (패턴 안 맞을 때 직접 확인용)
+        try:
+            data = r.json()
+        except Exception:
+            print("  JSON 파싱 실패. Response 일부:")
+            print(r.text[:500])
+            break
+
+        if not data:
+            # 빈 리스트면 더 가져올 페이지 없음
+            break
+
+        page_tags = []
+        for item in data:
+            for link in item.get("web_links", []):
+                url_str = link.get("url", "")
+                m = re.search(r"refs/tags/([^;\"&]+)", url_str)
+                if m:
+                    tag_name = m.group(1)
+                    page_tags.append(tag_name)
+                    break  # 한 item당 태그 이름 하나만 있으면 충분
+
+        if not page_tags:
+            # 더 이상 태그 형태가 없으면 종료 (혹은 이 페이지가 마지막)
+            break
+
+        all_tags.extend(page_tags)
+
+        if len(data) < PAGE_SIZE:
+            # 마지막 페이지
+            break
+
+        start += PAGE_SIZE
+
+    return sorted(set(all_tags))
 
 if __name__ == "__main__":
     if not PASSWORD:
@@ -47,23 +77,13 @@ if __name__ == "__main__":
         print(f"  레포지토리: {REPO_PATH}")
         print("=" * 60)
 
-        branches, branch_html = list_refs(session, REPO_PATH, "branches")
-        print(f"\n[브랜치 목록] 총 {len(branches)}개")
-        for b in branches:
-            print(f"  - {b}")
-        if not branches:
-            print("  (패턴 매칭 실패 — 아래 HTML 일부를 보고 구조 확인 필요)")
-            print(branch_html[:1000])
+        tags = get_tags(session, REPO_PATH)
 
-        tags, tag_html = list_refs(session, REPO_PATH, "tags")
         print(f"\n[태그 목록] 총 {len(tags)}개")
         for t in tags:
             print(f"  - {t}")
-        if not tags:
-            print("  (패턴 매칭 실패 — 아래 HTML 일부를 보고 구조 확인 필요)")
-            print(tag_html[:1000])
 
-        keyword = input("\n확인할 키워드(project명/seq/버전 등) 입력: ").strip()
+        keyword = input("\n확인할 키워드(브랜치명 일부 등) 입력: ").strip()
         if keyword:
             matched = [t for t in tags if keyword.lower() in t.lower()]
             if matched:

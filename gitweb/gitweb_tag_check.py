@@ -1,6 +1,7 @@
 import requests
 from requests.auth import HTTPBasicAuth
 import re
+import json
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -49,9 +50,13 @@ def get_branch_list(session, repo_path):
             break
 
         try:
-            data = r.json()
-        except Exception:
-            print("  JSON 파싱 실패. Response 일부:")
+            text = r.text
+            # Gerrit 계열 시스템은 XSSI 방지를 위해 응답 앞에 )]}' 를 붙임. 제거 후 파싱.
+            if text.startswith(")]}'"):
+                text = text[4:].lstrip("\n")
+            data = json.loads(text)
+        except Exception as e:
+            print(f"  JSON 파싱 실패: {e}. Response 일부:")
             print(r.text[:500])
             break
 
@@ -59,15 +64,35 @@ def get_branch_list(session, repo_path):
             break
 
         for item in data:
+            ref = item.get("ref", "")
+            if ref == "HEAD":
+                continue  # HEAD 항목은 브랜치 자체가 아니므로 건너뜀
+
+            branch_name = None
+            shortlog_url = None
+
+            # 패턴 1: ref 값 자체가 'refs/heads/이름' 형태인 경우
+            m = re.match(r"refs/heads/(.+)", ref)
+            if m:
+                branch_name = m.group(1)
+
+            # web_links 안에서도 shortlog URL 추출 시도 (이름 백업용으로도 사용)
             for link in item.get("web_links", []):
                 url_str = link.get("url", "")
-                m = re.search(r"refs/heads/([^;\"&]+)", url_str)
-                if m:
-                    branch_name = m.group(1)
-                    # url_str이 상대경로(/gitweb?...)일 수 있으니 BASE_URL과 합쳐줌
-                    full_url = url_str if url_str.startswith("http") else BASE_URL + url_str
-                    branches[branch_name] = full_url
-                    break
+                full_url = url_str if url_str.startswith("http") else BASE_URL + url_str
+                if "a=shortlog" in url_str or "shortlog" in url_str:
+                    shortlog_url = full_url
+                if not branch_name:
+                    m2 = re.search(r"refs/heads/([^;\"&]+)", url_str)
+                    if m2:
+                        branch_name = m2.group(1)
+
+            # 패턴 2: ref가 그냥 브랜치 이름 자체인 경우 (refs/heads/ 접두어 없이)
+            if not branch_name and ref and ref != "HEAD":
+                branch_name = ref
+
+            if branch_name:
+                branches[branch_name] = shortlog_url
 
         if len(data) < PAGE_SIZE:
             break
@@ -119,6 +144,10 @@ if __name__ == "__main__":
 
         target = input("\n태그를 확인할 브랜치명 입력 (정확히 입력): ").strip()
         if target in branches:
-            check_branch_tag(session, target, branches[target])
+            if branches[target]:
+                check_branch_tag(session, target, branches[target])
+            else:
+                print(f"  '{target}'의 shortlog URL을 못 찾았어요. web_links 구조가 예상과 다를 수 있어요.")
+                print(f"  해당 브랜치 항목 원본을 확인하려면 디버그 출력이 필요해요.")
         else:
             print(f"'{target}' 브랜치를 목록에서 찾지 못했어요. 정확한 이름인지 확인해 주세요.")

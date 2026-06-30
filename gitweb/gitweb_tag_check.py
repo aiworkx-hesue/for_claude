@@ -73,43 +73,33 @@ def get_branch_list(session, repo_path):
 
     return branches
 
-def get_tags(session, repo_path):
-    """/projects/{encoded}/tags?n=26&S=0 페이지네이션으로 전체 태그 수집"""
-    tags = {}  # {태그명: revision}
-    start = 0
+def get_tags(session, repo_path, limit=10):
+    """/projects/{encoded}/tags?n={limit} 로 상위 N개만 수집"""
     encoded_repo = quote(repo_path, safe="")
+    url = f"{BASE_URL}/projects/{encoded_repo}/tags?n={limit}"
+    print(f"[요청] {url}")
+    r = session.get(url, verify=False, timeout=10)
+    print(f"  Status: {r.status_code}")
 
-    while True:
-        url = f"{BASE_URL}/projects/{encoded_repo}/tags?n={PAGE_SIZE}&S={start}"
-        print(f"[요청] {url}")
-        r = session.get(url, verify=False, timeout=10)
-        print(f"  Status: {r.status_code}")
+    if r.status_code != 200:
+        print(f"  실패. Response 일부: {r.text[:300]}")
+        return {}
 
-        if r.status_code != 200:
-            print(f"  실패. Response 일부: {r.text[:300]}")
-            break
+    try:
+        text = strip_xssi_prefix(r.text)
+        data = json.loads(text)
+    except Exception as e:
+        print(f"  JSON 파싱 실패: {e}. Response 일부:")
+        print(r.text[:500])
+        return {}
 
-        try:
-            text = strip_xssi_prefix(r.text)
-            data = json.loads(text)
-        except Exception as e:
-            print(f"  JSON 파싱 실패: {e}. Response 일부:")
-            print(r.text[:500])
-            break
-
-        if not data:
-            break
-
-        for item in data:
-            ref = item.get("ref", "")
-            m = re.match(r"refs/tags/(.+)", ref)
-            tag_name = m.group(1) if m else ref
-            if tag_name:
-                tags[tag_name] = item.get("revision", "")
-
-        if len(data) < PAGE_SIZE:
-            break
-        start += PAGE_SIZE
+    tags = {}
+    for item in data:
+        ref = item.get("ref", "")
+        m = re.match(r"refs/tags/(.+)", ref)
+        tag_name = m.group(1) if m else ref
+        if tag_name:
+            tags[tag_name] = item.get("revision", "")
 
     return tags
 
@@ -128,8 +118,8 @@ if __name__ == "__main__":
         for name in branches:
             print(f"  - {name}")
 
-        tags = get_tags(session, REPO_PATH)
-        print(f"\n[태그 목록] 총 {len(tags)}개")
+        tags = get_tags(session, REPO_PATH, limit=10)
+        print(f"\n[태그 목록] 상위 {len(tags)}개")
         for name, rev in tags.items():
             print(f"  - {name}  (revision: {rev})")
 

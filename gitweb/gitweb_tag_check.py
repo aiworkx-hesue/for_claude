@@ -16,11 +16,13 @@ PAGE_SIZE = 26
 
 def get_session():
     s = requests.Session()
-    s.auth = HTTPBasicAuth(USERNAME, PASSWORD)
     headers = {"Accept": "application/json"}
     if SESSION_COOKIE:
         headers["Cookie"] = SESSION_COOKIE
     s.headers.update(headers)
+    # Basic Auth는 쿠키 기반 세션과 충돌할 수 있어 우선 제외.
+    # 그래도 안 되면 아래 줄 주석 해제해서 같이 시도해볼 것:
+    # s.auth = HTTPBasicAuth(USERNAME, PASSWORD)
     return s
 
 def get_branch_list(session, repo_path):

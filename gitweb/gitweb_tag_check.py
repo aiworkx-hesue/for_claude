@@ -16,7 +16,12 @@ PAGE_SIZE = 26
 
 def get_session():
     s = requests.Session()
-    headers = {"Accept": "application/json"}
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": f"{BASE_URL}/admin/repos/{REPO_PATH}",
+        "X-Requested-With": "XMLHttpRequest",
+    }
     if SESSION_COOKIE:
         headers["Cookie"] = SESSION_COOKIE
     s.headers.update(headers)

@@ -28,6 +28,9 @@ Gerrit SSH 인터페이스로 특정 브랜치 HEAD에 달린 태그 조회
 
 import subprocess
 import re
+import tempfile
+import os
+import shutil
 
 # ========== 설정 ==========
 GERRIT_HOST = "10.166.211.148"
@@ -35,6 +38,7 @@ GERRIT_SSH_PORT = 29414
 USERNAME = "twitch.kim.partner.samsung.com"
 REPO_PATH = "Automotive/DBIO/v9/idcevo-manifest"
 BRANCH_NAME = "exynosauto9_sop28_stable_scarthgap_6.6-b_15-6.6"  # 확인할 브랜치명
+HISTORY_TAG_LIMIT = 10  # 브랜치 이력에서 보여줄 최근 태그 개수
 # ==========================
 
 REMOTE = f"ssh://{USERNAME}@{GERRIT_HOST}:{GERRIT_SSH_PORT}/{REPO_PATH}"
@@ -117,6 +121,61 @@ def get_all_tags():
         tag_to_commit[name] = peeled.get(name, sha)
     return tag_to_commit
 
+def get_tags_in_branch_history(branch_name, limit=10):
+    """브랜치 이력에 실제로 속한 최근 태그 N개 조회.
+
+    [방식] git ls-remote는 커밋 순서/이력을 주지 않으므로,
+    브랜치를 blobless(--filter=blob:none)로 얕게 fetch 해서
+    커밋 이력만 로컬에 가져온 뒤, 그 이력에 도달 가능한(--merged) 태그만 걸러냄.
+    파일 내용(blob)은 안 받으므로 전체 clone 보다 훨씬 빠르고 가벼움.
+    임시 폴더를 쓰고 끝나면 삭제함.
+    """
+    print("\n" + "=" * 60)
+    print(f"[4] 브랜치 이력에 속한 최근 태그 (최대 {limit}개)")
+    print("=" * 60)
+
+    tmpdir = tempfile.mkdtemp(prefix="gerrit_tags_")
+    try:
+        # 1) 빈 저장소 초기화
+        subprocess.run(["git", "init", "-q"], cwd=tmpdir, timeout=30)
+
+        # 2) 브랜치 이력 + 태그를 blob 없이 가져오기
+        print("  브랜치 이력 가져오는 중... (blob 제외, 잠시 걸릴 수 있어요)")
+        fetch = subprocess.run(
+            ["git", "fetch", "-q", "--filter=blob:none", "--tags",
+             REMOTE, f"refs/heads/{branch_name}"],
+            cwd=tmpdir, capture_output=True, text=True, timeout=180
+        )
+        if fetch.returncode != 0:
+            print(f"  ❌ fetch 실패: {fetch.stderr.strip()[:200]}")
+            return
+
+        # 3) 방금 가져온 브랜치 tip을 FETCH_HEAD로 참조
+        #    FETCH_HEAD에 도달 가능한(--merged) 태그만 최신순으로 정렬
+        result = subprocess.run(
+            ["git", "tag", "--merged", "FETCH_HEAD", "--sort=-creatordate"],
+            cwd=tmpdir, capture_output=True, text=True, timeout=60
+        )
+        if result.returncode != 0:
+            # creatordate 정렬 실패 시 정렬 없이 재시도
+            result = subprocess.run(
+                ["git", "tag", "--merged", "FETCH_HEAD"],
+                cwd=tmpdir, capture_output=True, text=True, timeout=60
+            )
+
+        tags = [t for t in result.stdout.splitlines() if t.strip()]
+        tags = tags[:limit]
+
+        if tags:
+            print(f"\n  ✅ 브랜치 '{branch_name}' 이력상 최근 태그 {len(tags)}개:")
+            for t in tags:
+                print(f"     - {t}")
+        else:
+            print("  이 브랜치 이력에 속한 태그가 없어요.")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 def main():
     if not check_connection():
         return
@@ -140,6 +199,9 @@ def main():
     else:
         print(f"\n❌ 브랜치 '{BRANCH_NAME}' HEAD({head_sha[:10]})에 달린 태그가 없어요.")
         print("   (아직 태깅되지 않았거나, HEAD 이전 커밋에만 태그가 있을 수 있어요.)")
+
+    # HEAD 아래(이력)에 속한 최근 태그도 함께 조회
+    get_tags_in_branch_history(BRANCH_NAME, limit=HISTORY_TAG_LIMIT)
 
 if __name__ == "__main__":
     main()

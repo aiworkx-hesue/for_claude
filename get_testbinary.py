@@ -117,10 +117,11 @@ def get_binary():
         print(f"  [오류] {e}")
         return None
 
-    # 3) WebDAV 경로 조합 (file_link + project_image_path)
+    # 3) WebDAV 경로 조합 (file_link + '/' + project_image_path)
     file_link = detail[0]["file_link"]
     image_path = detail[0]["project_image_path"]
-    webdav_dir_url = f"{file_link}{image_path}"
+    # 사이에 슬래시가 없으면 넣고, 양쪽 다 있으면 중복 제거
+    webdav_dir_url = file_link.rstrip("/") + "/" + image_path.lstrip("/")
     # 끝에 / 가 없으면 붙여줌 (디렉토리 조회용)
     if not webdav_dir_url.endswith("/"):
         webdav_dir_url += "/"

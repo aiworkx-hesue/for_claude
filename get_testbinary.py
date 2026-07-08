@@ -41,10 +41,11 @@ def get_testpipeline():
         print(f"  [오류] {e}")
     return None
 
-def list_webdav_files(webdav_dir_url):
-    """WebDAV 디렉토리(PROPFIND)에서 파일 목록을 가져옴.
-    Depth:1 로 해당 디렉토리 바로 아래 항목만 조회.
-    반환: 파일 이름 리스트 (하위 폴더 제외, 파일만)
+def list_webdav_entries(webdav_dir_url):
+    """WebDAV 디렉토리(PROPFIND, Depth:1)에서 바로 아래 항목 조회.
+    반환: (files, subdirs)
+      files   = 파일 이름 리스트
+      subdirs = 하위 폴더 이름 리스트
     """
     headers = {"Depth": "1", "Content-Type": "application/xml"}
     r = requests.request(
@@ -55,29 +56,66 @@ def list_webdav_files(webdav_dir_url):
     if r.status_code not in (207, 200):
         print(f"  [WebDAV 목록 오류] Status {r.status_code}")
         print(f"  {r.text[:300]}")
-        return []
+        return [], []
 
-    # WebDAV 응답은 XML(멀티스테이터스). <d:href> 안에 각 항목 경로가 들어있음.
-    files = []
+    files, subdirs = [], []
+    # 요청한 디렉토리의 경로 부분(호스트 제외)을 정규화해서 자기 자신 판별에 사용
+    from urllib.parse import urlparse
+    self_path = urlparse(webdav_dir_url).path.rstrip("/")
     try:
         tree = ElementTree.fromstring(r.content)
-        # 네임스페이스가 있어서 태그명에 {DAV:} 접두어가 붙음
         for resp in tree.iter("{DAV:}response"):
             href_el = resp.find("{DAV:}href")
             if href_el is None or not href_el.text:
                 continue
             href = unquote(href_el.text)
-            # 디렉토리 자기 자신(끝이 /)은 건너뜀
-            if href.endswith("/"):
+            href_path = urlparse(href).path.rstrip("/") if "://" in href else href.rstrip("/")
+
+            # 요청한 디렉토리 자기 자신은 제외 (무한재귀 방지)
+            if href_path == self_path:
                 continue
-            filename = os.path.basename(href.rstrip("/"))
-            if filename:
-                files.append(filename)
+
+            # 폴더 여부: resourcetype 안에 <collection/> 있으면 폴더
+            is_dir = resp.find(".//{DAV:}collection") is not None
+            name = os.path.basename(href_path)
+            if not name:
+                continue
+
+            if is_dir:
+                subdirs.append(name)
+            else:
+                files.append(name)
     except Exception as e:
         print(f"  [XML 파싱 오류] {e}")
-        return []
+        return [], []
 
-    return files
+    return files, subdirs
+
+def download_webdav_recursive(webdav_dir_url, local_dir):
+    """WebDAV 디렉토리를 하위 폴더까지 재귀적으로 전부 다운로드.
+    webdav_dir_url: 현재 조회할 원격 디렉토리 (끝에 / 포함)
+    local_dir     : 저장할 로컬 폴더
+    반환: 다운로드 성공한 파일 수
+    """
+    os.makedirs(local_dir, exist_ok=True)
+    files, subdirs = list_webdav_entries(webdav_dir_url)
+
+    count = 0
+    # 1) 현재 폴더의 파일들 다운로드
+    for fname in files:
+        file_url = urljoin(webdav_dir_url, fname)
+        save_path = os.path.join(local_dir, fname)
+        if download_webdav_file(file_url, save_path):
+            count += 1
+
+    # 2) 하위 폴더로 재귀
+    for sub in subdirs:
+        sub_url = urljoin(webdav_dir_url, sub + "/")
+        sub_local = os.path.join(local_dir, sub)
+        print(f"  [폴더] {sub}/ 진입")
+        count += download_webdav_recursive(sub_url, sub_local)
+
+    return count
 
 def download_webdav_file(file_url, save_path):
     """WebDAV 파일 하나를 다운로드해서 저장"""
@@ -136,21 +174,10 @@ def get_binary():
     os.makedirs(save_dir, exist_ok=True)
     print(f"  저장 폴더: ./{save_dir}/")
 
-    # 5) 디렉토리 내 파일 목록 조회 후 전부 다운로드
-    files = list_webdav_files(webdav_dir_url)
-    if not files:
-        print("  [경고] 다운로드할 파일이 없어요.")
-        return None
-
-    print(f"\n  총 {len(files)}개 파일 다운로드 시작:")
-    success = 0
-    for fname in files:
-        file_url = urljoin(webdav_dir_url, fname)
-        save_path = os.path.join(save_dir, fname)
-        if download_webdav_file(file_url, save_path):
-            success += 1
-
-    print(f"\n  ✅ {success}/{len(files)}개 다운로드 완료 → ./{save_dir}/")
+    # 5) 디렉토리 내 모든 파일/폴더를 재귀적으로 다운로드
+    print(f"\n  다운로드 시작 (하위 폴더 포함):")
+    success = download_webdav_recursive(webdav_dir_url, save_dir)
+    print(f"\n  ✅ 총 {success}개 파일 다운로드 완료 → ./{save_dir}/")
     return save_dir
 
 

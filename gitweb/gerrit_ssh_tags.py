@@ -28,6 +28,8 @@ Gerrit SSH 인터페이스로 특정 브랜치 HEAD에 달린 태그 조회
 
 import subprocess
 import re
+import tempfile
+import shutil
 
 # ========== 설정 ==========
 GERRIT_HOST = "10.166.211.148"
@@ -118,67 +120,85 @@ def get_all_tags():
         tag_to_commit[name] = peeled.get(name, sha)
     return tag_to_commit
 
-def get_recent_tags_grouped(limit=10):
-    """최근 태그를 순서대로 출력하되, 같은 커밋을 가리키는 태그는 묶어서 표시.
+def get_branch_tags_grouped(branch_name, limit=10):
+    """해당 브랜치 이력에 속한 태그만 조회하고, 같은 커밋끼리 묶어서 출력.
 
-    [방식] git ls-remote --tags 로 태그와 SHA를 가져옴.
-    annotated 태그는 ^{} 참조(실제 커밋 SHA)를 우선 사용해,
-    같은 커밋에 달린 여러 태그를 정확히 같은 그룹으로 묶음.
-    정렬은 태그명 버전 기준(-v:refname)으로 최신순.
+    [방식]
+    1) 브랜치를 blobless(--filter=blob:none)로 얕게 fetch (파일 내용 제외, 빠름)
+    2) git tag --merged FETCH_HEAD 로 그 브랜치 이력에 도달 가능한 태그만 필터
+    3) 각 태그가 가리키는 실제 커밋 SHA(annotated는 ^{}) 기준으로 그룹핑
+    4) 커밋을 브랜치 이력 최신순으로 정렬해 상위 N개 커밋만 출력
+    임시 폴더는 끝나면 삭제.
     """
     print("\n" + "=" * 60)
-    print(f"[4] 최근 태그 목록 (최대 {limit}개, 같은 커밋끼리 묶음)")
+    print(f"[4] 브랜치 '{branch_name}' 태그 목록 (최대 {limit}개 커밋, 같은 커밋끼리 묶음)")
     print("=" * 60)
 
-    # 태그명 -> 실제 커밋 SHA 매핑 (annotated 태그 ^{} 우선)
-    tag_to_commit = get_all_tags()
-    if not tag_to_commit:
-        print("  태그가 없어요.")
-        return
+    tmpdir = tempfile.mkdtemp(prefix="gerrit_tags_")
+    try:
+        subprocess.run(["git", "init", "-q"], cwd=tmpdir, timeout=30)
 
-    # 최신순 정렬을 위해 ls-remote 를 버전 정렬로 다시 호출해 순서 확보
-    cmd = ["git", "ls-remote", "--tags", "--sort=-v:refname", REMOTE]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    ordered_tags = []
-    if r.returncode == 0:
-        seen = set()
-        for line in r.stdout.splitlines():
-            m = re.search(r"refs/tags/(\S+)", line)
-            if not m:
-                continue
-            name = m.group(1)
-            if name.endswith("^{}"):
-                continue
-            if name not in seen:
-                seen.add(name)
-                ordered_tags.append(name)
-    else:
-        ordered_tags = list(tag_to_commit.keys())
+        print("  브랜치 이력 가져오는 중... (blob 제외)")
+        fetch = subprocess.run(
+            ["git", "fetch", "-q", "--filter=blob:none", "--tags",
+             REMOTE, f"refs/heads/{branch_name}"],
+            cwd=tmpdir, capture_output=True, text=True, timeout=180
+        )
+        if fetch.returncode != 0:
+            print(f"  ❌ fetch 실패: {fetch.stderr.strip()[:200]}")
+            return
 
-    # 커밋 SHA 기준으로 그룹핑 (순서 유지)
-    groups = []          # [(commit_sha, [tag, ...]), ...]
-    commit_index = {}    # commit_sha -> groups 내 인덱스
-    for name in ordered_tags:
-        sha = tag_to_commit.get(name)
-        if sha is None:
-            continue
-        if sha in commit_index:
-            groups[commit_index[sha]][1].append(name)
-        else:
-            commit_index[sha] = len(groups)
-            groups.append((sha, [name]))
+        # 이 브랜치 이력에 도달 가능한 태그만 추림
+        merged = subprocess.run(
+            ["git", "tag", "--merged", "FETCH_HEAD"],
+            cwd=tmpdir, capture_output=True, text=True, timeout=60
+        )
+        branch_tags = set(t.strip() for t in merged.stdout.splitlines() if t.strip())
+        if not branch_tags:
+            print("  이 브랜치 이력에 속한 태그가 없어요.")
+            return
 
-    # 최대 limit 개 그룹만 출력
-    groups = groups[:limit]
-    print(f"\n  ✅ 최근 태그 {sum(len(g[1]) for g in groups)}개 (커밋 {len(groups)}개):\n")
-    for sha, names in groups:
-        if len(names) == 1:
-            print(f"   - {names[0]}   ({sha[:10]})")
-        else:
-            # 같은 커밋에 태그 여러 개
-            print(f"   - {names[0]}   ({sha[:10]})  ← 같은 커밋 태그 {len(names)}개")
-            for extra in names[1:]:
-                print(f"       └ {extra}")
+        # 각 태그 -> 실제 커밋 SHA (annotated 태그는 ^{} 로 커밋까지 해석)
+        tag_commit = {}
+        for tag in branch_tags:
+            rev = subprocess.run(
+                ["git", "rev-list", "-n", "1", tag],  # 태그가 가리키는 커밋
+                cwd=tmpdir, capture_output=True, text=True, timeout=30
+            )
+            sha = rev.stdout.strip()
+            if sha:
+                tag_commit[tag] = sha
+
+        # 브랜치 이력 최신순 커밋 순서 확보
+        order = subprocess.run(
+            ["git", "rev-list", "FETCH_HEAD"],
+            cwd=tmpdir, capture_output=True, text=True, timeout=60
+        )
+        commit_order = {sha: i for i, sha in enumerate(order.stdout.splitlines())}
+
+        # 커밋 SHA -> [태그들] 그룹핑
+        groups = {}
+        for tag, sha in tag_commit.items():
+            groups.setdefault(sha, []).append(tag)
+
+        # 커밋을 브랜치 이력 순서(최신 먼저)로 정렬
+        sorted_shas = sorted(
+            groups.keys(),
+            key=lambda s: commit_order.get(s, float("inf"))
+        )[:limit]
+
+        total_tags = sum(len(groups[s]) for s in sorted_shas)
+        print(f"\n  ✅ 태그 {total_tags}개 (커밋 {len(sorted_shas)}개):\n")
+        for sha in sorted_shas:
+            names = sorted(groups[sha])
+            if len(names) == 1:
+                print(f"   - {names[0]}   ({sha[:10]})")
+            else:
+                print(f"   - {names[0]}   ({sha[:10]})  ← 같은 커밋 태그 {len(names)}개")
+                for extra in names[1:]:
+                    print(f"       └ {extra}")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def main():
@@ -205,8 +225,8 @@ def main():
         print(f"\n❌ 브랜치 '{BRANCH_NAME}' HEAD({head_sha[:10]})에 달린 태그가 없어요.")
         print("   (아직 태깅되지 않았거나, HEAD 이전 커밋에만 태그가 있을 수 있어요.)")
 
-    # HEAD 아래(이력)에 속한 최근 태그도 함께 조회
-    get_recent_tags_grouped(limit=HISTORY_TAG_LIMIT)
+    # 이 브랜치 이력에 속한 태그를 커밋별로 묶어서 조회
+    get_branch_tags_grouped(BRANCH_NAME, limit=HISTORY_TAG_LIMIT)
 
 if __name__ == "__main__":
     main()

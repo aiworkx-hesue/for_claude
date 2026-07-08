@@ -1,18 +1,22 @@
 """
-Gerrit SSH 인터페이스로 특정 태그와 '같은 커밋'에 달린 다른 태그 조회
+Gerrit SSH로 특정 태그(IR날짜_시간) + 브랜치명 조합 태그 조회
+
+태그 명명 규칙: IR<날짜>_<시간>_<브랜치명>
+예) IR260707_125629_exynosauto9_sop28_stable_scarthgap_6.6-b_15-6.6
+
+이 스크립트는 'IR<날짜>_<시간>' 접두어(PREFIX)와 브랜치명(BRANCH_NAME)을 받아:
+  1) PREFIX + "_" + BRANCH_NAME 태그가 존재하는지 확인
+  2) 같은 PREFIX 로 시작하는 (= 같은 빌드 시점의) 다른 브랜치 태그들도 함께 표시
+전체 이력 fetch 없이 태그 목록만 조회하므로 빠름.
 
 ============================================================
 [사전 준비] SSH 키 생성 및 등록 (PC마다 최초 1회만)
 ============================================================
-1) 키 생성 (물어보는 항목은 전부 엔터 = 기본값/암호없음)
-     ssh-keygen -t ed25519 -C "twitch.kim.partner.samsung.com"
-2) 공개키 확인 후 전체 복사
-     cat ~/.ssh/id_ed25519.pub
-3) Gerrit 웹 UI에 등록
-     Settings > SSH Keys > 붙여넣기 > Add New SSH Key
-4) 연결 테스트 (버전 뜨면 성공. 처음이면 yes)
-     ssh -p 29414 twitch.kim.partner.samsung.com@10.166.211.148 gerrit version
-※ 개인키는 실행 PC의 ~/.ssh 에 있어야 함. PC 옮기면 재등록.
+1) ssh-keygen -t ed25519 -C "twitch.kim.partner.samsung.com"   (전부 엔터)
+2) cat ~/.ssh/id_ed25519.pub                                   (전체 복사)
+3) Gerrit 웹 > Settings > SSH Keys > 붙여넣기 > Add New SSH Key
+4) ssh -p 29414 twitch.kim.partner.samsung.com@10.166.211.148 gerrit version
+※ 개인키는 실행 PC의 ~/.ssh 에 있어야 함.
 ============================================================
 """
 
@@ -25,86 +29,84 @@ GERRIT_HOST = "10.166.211.148"
 GERRIT_SSH_PORT = 29414
 USERNAME = "twitch.kim.partner.samsung.com"
 REPO_PATH = "Automotive/DBIO/v9/idcevo-manifest"
-TARGET_TAG = "IR260707_125629"   # 확인할 기준 태그 (실행 시 인자로도 받음)
+
+PREFIX = "IR260707_125629"   # IR<날짜>_<시간> 부분
+BRANCH_NAME = "exynosauto9_sop28_stable_scarthgap_6.6-b_15-6.6"  # 확인할 브랜치명
 # ==========================
 
 REMOTE = f"ssh://{USERNAME}@{GERRIT_HOST}:{GERRIT_SSH_PORT}/{REPO_PATH}"
 
-def get_tag_commit_map():
-    """전체 태그 -> 실제 커밋 SHA 매핑.
+def list_tags_with_prefix(prefix):
+    """PREFIX 로 시작하는 태그만 서버에서 직접 필터링해 조회.
 
-    [annotated 태그 처리]
-    ls-remote 결과에서 annotated 태그는 두 줄로 나옴:
-      <태그객체_SHA>   refs/tags/TAG
-      <실제_커밋_SHA>  refs/tags/TAG^{}   <- ^{} 가 진짜 커밋
-    커밋 비교가 목적이므로 ^{}(peeled)가 있으면 그 값을 우선 사용.
+    git ls-remote 는 refspec 패턴을 줄 수 있어서, 서버가 해당 태그만
+    돌려줌 -> 전체 태그를 다 받지 않아 빠름.
     """
-    cmd = ["git", "ls-remote", "--tags", REMOTE]
+    pattern = f"refs/tags/{prefix}*"
+    cmd = ["git", "ls-remote", "--tags", REMOTE, pattern]
+    print(f"[실행] git ls-remote --tags ... {pattern}")
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
-        print(f"[오류] 태그 조회 실패: {r.stderr.strip()}")
-        return {}
+        print(f"[오류] {r.stderr.strip()}")
+        return []
 
-    peeled = {}  # TAG -> 실제 커밋 SHA (annotated)
-    plain = {}   # TAG -> SHA (경량 태그이거나 annotated 태그객체 SHA)
+    tags = []
     for line in r.stdout.splitlines():
-        parts = line.split("\t")
-        if len(parts) != 2:
-            continue
-        sha, ref = parts[0].strip(), parts[1].strip()
-        m = re.match(r"refs/tags/(.+)", ref)
+        m = re.search(r"refs/tags/(\S+)", line)
         if not m:
             continue
         name = m.group(1)
-        if name.endswith("^{}"):
-            peeled[name[:-3]] = sha
-        else:
-            plain[name] = sha
-
-    tag_commit = {}
-    for name, sha in plain.items():
-        tag_commit[name] = peeled.get(name, sha)
-    return tag_commit
+        if name.endswith("^{}"):   # annotated 태그의 peeled 참조는 중복이라 제외
+            continue
+        sha = line.split("\t")[0][:10]
+        tags.append((name, sha))
+    return tags
 
 def main():
-    # 실행 시 인자로 태그를 주면 그걸 우선 사용: python gerrit_ssh_tags.py <태그명>
-    target = sys.argv[1] if len(sys.argv) > 1 else TARGET_TAG
+    # 실행 인자로도 받을 수 있음: python gerrit_ssh_tags.py <PREFIX> [BRANCH_NAME]
+    prefix = sys.argv[1] if len(sys.argv) > 1 else PREFIX
+    branch = sys.argv[2] if len(sys.argv) > 2 else BRANCH_NAME
+
+    target_tag = f"{prefix}_{branch}"
 
     print("=" * 60)
-    print(f"  기준 태그: {target}")
-    print(f"  레포: {REPO_PATH}")
+    print(f"  접두어(PREFIX): {prefix}")
+    print(f"  브랜치명       : {branch}")
+    print(f"  찾는 태그      : {target_tag}")
     print("=" * 60)
 
-    tag_commit = get_tag_commit_map()
-    if not tag_commit:
+    tags = list_tags_with_prefix(prefix)
+
+    if not tags:
+        print(f"\n❌ '{prefix}' 로 시작하는 태그가 없어요.")
         return
 
-    if target not in tag_commit:
-        print(f"\n❌ 태그 '{target}' 을 레포에서 찾을 수 없어요. 이름을 확인해 주세요.")
-        # 비슷한 태그 몇 개 힌트로 제시
-        similar = [t for t in tag_commit if target[:6] in t][:5]
-        if similar:
-            print("   혹시 이런 태그인가요?")
-            for s in similar:
-                print(f"     - {s}")
-        return
+    tag_names = [t for t, _ in tags]
 
-    target_sha = tag_commit[target]
-    print(f"\n  '{target}' 이 가리키는 커밋: {target_sha}")
-
-    # 같은 커밋을 가리키는 다른 태그 찾기
-    same_commit = [t for t, sha in tag_commit.items() if sha == target_sha and t != target]
-
+    # 1) 정확히 일치하는 태그 확인
     print("\n" + "=" * 60)
-    print("  같은 커밋에 달린 다른 태그")
+    print("  [1] 브랜치 태그 존재 여부")
     print("=" * 60)
-    if same_commit:
-        print(f"\n  ✅ 같은 커밋({target_sha[:10]})에 달린 다른 태그 {len(same_commit)}개:")
-        for t in sorted(same_commit):
-            print(f"     - {t}")
-        print(f"\n  (기준 태그 포함 총 {len(same_commit) + 1}개가 같은 커밋을 가리켜요)")
+    if target_tag in tag_names:
+        sha = dict(tags)[target_tag]
+        print(f"  ✅ 있음: {target_tag}  ({sha})")
     else:
-        print(f"\n  이 커밋에는 '{target}' 태그 하나만 달려 있어요.")
+        print(f"  ❌ 없음: {target_tag}")
+        print("     (이 브랜치는 해당 빌드 시점에 태깅되지 않았을 수 있어요)")
+
+    # 2) 같은 PREFIX 를 가진 다른 태그들 (= 같은 빌드 시점의 다른 브랜치)
+    others = sorted(t for t in tag_names if t != target_tag)
+    print("\n" + "=" * 60)
+    print(f"  [2] 같은 접두어 '{prefix}_' 를 가진 다른 태그")
+    print("=" * 60)
+    if others:
+        print(f"  총 {len(others)}개:")
+        for t in others:
+            # PREFIX_ 뒷부분(브랜치명 추정)만 강조해서 표시
+            suffix = t[len(prefix) + 1:] if t.startswith(prefix + "_") else t
+            print(f"     - {t}")
+    else:
+        print("  다른 태그는 없어요. (이 접두어로는 이 브랜치 태그만 존재)")
 
 if __name__ == "__main__":
     main()

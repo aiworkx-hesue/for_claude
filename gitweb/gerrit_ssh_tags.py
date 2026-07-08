@@ -80,13 +80,25 @@ def get_tags_via_git():
     print("=" * 60)
 
     remote = f"ssh://{USERNAME}@{GERRIT_HOST}:{GERRIT_SSH_PORT}/{REPO_PATH}"
-    cmd = ["git", "ls-remote", "--tags", "--sort=-creatordate", remote]
+    # 주의: --sort=-creatordate 는 로컬 객체 접근이 필요해 원격 ls-remote에서는 실패함.
+    # 버전 정렬(-v:refname)은 refname만으로 정렬하므로 원격에서도 동작함.
+    cmd = ["git", "ls-remote", "--tags", "--sort=-v:refname", remote]
     print(f"[실행] {' '.join(cmd)}")
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except Exception as e:
         print(f"  [오류] {e}")
         return []
+
+    # 정렬 옵션이 환경에 따라 실패하면 정렬 없이 재시도
+    if result.returncode != 0:
+        print(f"  [정렬 옵션 실패, 정렬 없이 재시도] {result.stderr.strip()[:100]}")
+        cmd_fallback = ["git", "ls-remote", "--tags", remote]
+        try:
+            result = subprocess.run(cmd_fallback, capture_output=True, text=True, timeout=30)
+        except Exception as e:
+            print(f"  [오류] {e}")
+            return []
 
     if result.returncode != 0:
         print(f"  [오류] {result.stderr.strip()}")

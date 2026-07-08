@@ -31,10 +31,20 @@ USERNAME = "twitch.kim.partner.samsung.com"
 REPO_PATH = "Automotive/DBIO/v9/idcevo-manifest"
 
 PREFIX = "IR260707_125629"   # IR<날짜>_<시간> 부분
-BRANCH_NAME = "exynosauto9_sop28_stable_scarthgap_6.6-b_15-6.6"  # 확인할 브랜치명
+BRANCH_NAME = "exynosauto9_sop28_stable_scarthgap_6.6-b_15-6.6"  # 확인할 브랜치명(전체)
+BRANCH_TAG_STRIP = "exynosauto9_"  # 태그명 조합 시 브랜치명 맨 앞에서 제거할 접두어
 # ==========================
 
 REMOTE = f"ssh://{USERNAME}@{GERRIT_HOST}:{GERRIT_SSH_PORT}/{REPO_PATH}"
+
+def branch_to_tag_suffix(branch):
+    """브랜치명을 태그 접미사로 변환.
+    태그에는 브랜치명 맨 앞의 'exynosauto9_' 가 빠지므로 제거함.
+    예) exynosauto9_sop28_stable_...  ->  sop28_stable_...
+    """
+    if BRANCH_TAG_STRIP and branch.startswith(BRANCH_TAG_STRIP):
+        return branch[len(BRANCH_TAG_STRIP):]
+    return branch
 
 def list_tags_with_prefix(prefix):
     """PREFIX 로 시작하는 태그만 서버에서 직접 필터링해 조회.
@@ -67,11 +77,13 @@ def main():
     prefix = sys.argv[1] if len(sys.argv) > 1 else PREFIX
     branch = sys.argv[2] if len(sys.argv) > 2 else BRANCH_NAME
 
-    target_tag = f"{prefix}_{branch}"
+    tag_suffix = branch_to_tag_suffix(branch)
+    target_tag = f"{prefix}_{tag_suffix}"
 
     print("=" * 60)
     print(f"  접두어(PREFIX): {prefix}")
-    print(f"  브랜치명       : {branch}")
+    print(f"  브랜치명(전체) : {branch}")
+    print(f"  태그 접미사    : {tag_suffix}  (exynosauto9_ 제거됨)")
     print(f"  찾는 태그      : {target_tag}")
     print("=" * 60)
 

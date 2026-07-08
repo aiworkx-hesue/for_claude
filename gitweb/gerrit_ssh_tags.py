@@ -73,7 +73,21 @@ def get_branch_head_sha(branch_name):
 
 def get_all_tags():
     """전체 태그와 각 태그가 가리키는 SHA 조회.
-    annotated tag는 태그객체 SHA와 실제 커밋 SHA(^{})가 다르므로 둘 다 매핑."""
+
+    [핵심 처리 - annotated tag 문제]
+    git 태그에는 두 종류가 있어요:
+      1) 경량(lightweight) 태그: 커밋을 직접 가리킴. SHA = 커밋 SHA
+      2) 주석(annotated) 태그: 태그 객체(메시지/작성자 포함)를 별도로 만들고,
+         그 태그 객체가 커밋을 가리킴.
+
+    ls-remote 결과에서 annotated 태그는 두 줄로 나옵니다:
+      <태그객체_SHA>   refs/tags/v1.0
+      <실제_커밋_SHA>  refs/tags/v1.0^{}     <- ^{} 가 "실제 가리키는 커밋"
+
+    브랜치 HEAD는 '커밋 SHA'이므로, 태그의 태그객체 SHA와 비교하면
+    annotated 태그는 절대 안 맞습니다. 따라서 ^{}(peeled) 가 있으면
+    그 커밋 SHA를 우선 사용해야 정확히 매칭됩니다.
+    """
     cmd = ["git", "ls-remote", "--tags", REMOTE]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if r.returncode != 0:
@@ -82,8 +96,8 @@ def get_all_tags():
 
     # tag_name -> 가리키는 커밋 SHA
     tag_to_commit = {}
-    peeled = {}  # ^{} 로 끝나는 실제 커밋 참조
-    plain = {}
+    peeled = {}  # ^{} 로 끝나는 참조 = annotated 태그가 실제로 가리키는 커밋
+    plain = {}   # 일반 참조 = 경량 태그의 커밋 SHA, 또는 annotated 태그의 태그객체 SHA
     for line in r.stdout.splitlines():
         parts = line.split("\t")
         if len(parts) != 2:
@@ -94,11 +108,11 @@ def get_all_tags():
             continue
         name = m.group(1)
         if name.endswith("^{}"):
-            peeled[name[:-3]] = sha  # annotated tag 가 실제로 가리키는 커밋
+            peeled[name[:-3]] = sha  # ^{} 3글자를 떼어 원래 태그명으로 저장
         else:
             plain[name] = sha
 
-    # annotated tag는 peeled(실제 커밋)를 우선, 없으면 plain(경량 태그) 사용
+    # 최종 매핑: peeled(실제 커밋)가 있으면 우선, 없으면(경량 태그) plain 사용
     for name, sha in plain.items():
         tag_to_commit[name] = peeled.get(name, sha)
     return tag_to_commit

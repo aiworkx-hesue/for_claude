@@ -24,7 +24,7 @@ def get_testpipeline():
         try:
             data = r.json()
             # print(f"  Response:\n{json.dumps(data, indent=2, ensure_ascii=False)}")
-            print(data[0])
+            print(f"Response: data[0] \n{data[0]}")
             return data
         except:
             print(f"  Response (text): {r.text[:500]}")

@@ -8,91 +8,53 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ========== 설정 ==========
 BASE_URL = "http://10.166.211.148:8084"
-REPO_PATH = "Automotive/DBIO/v9/idcevo-manifest"   # 실제 레포 경로 (슬래시 포함, 인코딩은 코드에서 처리)
+REPO_PATH = "Automotive/DBIO/v9/idcevo-manifest"
+BRANCH_NAME = "exynosauto9_sop28_stable_scarthgap_6.6-b_15-6.6"  # 확인할 브랜치명
 USERNAME = "twitch.kim.partner.samsung.com"
-PASSWORD = ""   # 여기에 직접 입력해서 사용하세요 (코드에 그대로 두고 공유/업로드 금지)
-SESSION_COOKIE = ""  # 브라우저에서 복사한 전체 쿠키 문자열을 여기에 직접 입력 (공유/업로드 금지)
-PAGE_SIZE = 26
+PASSWORD = ""   # 여기에 직접 입력 (공유/업로드 금지)
+TAG_LIMIT = 10  # 가져올 태그 수
 # ==========================
 
 def get_session():
     s = requests.Session()
-    headers = {
-        "Accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    }
-    if SESSION_COOKIE:
-        headers["Cookie"] = SESSION_COOKIE
-    s.headers.update(headers)
+    s.auth = HTTPBasicAuth(USERNAME, PASSWORD)
+    s.headers.update({"Accept": "application/json"})
     return s
 
-def strip_xssi_prefix(text):
-    """Gerrit REST API는 응답 앞에 )]}' (줄바꿈 포함될 수 있음) 를 붙임"""
+def strip_xssi(text):
+    """Gerrit 응답 앞에 붙는 )]}' 제거"""
     return re.sub(r"^\)\s*\]\s*\}\s*'\s*", "", text)
 
-def get_branch_list(session, repo_path):
-    """/projects/{encoded}/branches?n=26&S=0 페이지네이션으로 전체 브랜치 수집"""
-    branches = {}  # {브랜치명: ref}
-    start = 0
-    encoded_repo = quote(repo_path, safe="")
-
-    while True:
-        url = f"{BASE_URL}/projects/{encoded_repo}/branches?n={PAGE_SIZE}&S={start}"
-        print(f"[요청] {url}")
-        r = session.get(url, verify=False, timeout=10)
-        print(f"  Status: {r.status_code}")
-        print(f"  [디버그] 응답 Content-Type: {r.headers.get('Content-Type')}")
-
-        if r.status_code != 200:
-            print(f"  실패. Response 일부: {r.text[:300]}")
-            break
-
-        try:
-            text = strip_xssi_prefix(r.text)
-            data = json.loads(text)
-        except Exception as e:
-            print(f"  JSON 파싱 실패: {e}. Response 일부:")
-            print(r.text[:500])
-            break
-
-        if not data:
-            break
-
-        for item in data:
-            ref = item.get("ref", "")
-            if ref == "HEAD":
-                continue
-            m = re.match(r"refs/heads/(.+)", ref)
-            branch_name = m.group(1) if m else ref
-            if branch_name:
-                branches[branch_name] = ref
-
-        if len(data) < PAGE_SIZE:
-            break
-        start += PAGE_SIZE
-
-    return branches
-
-def get_tags(session, repo_path, limit=10):
-    """/projects/{encoded}/tags?n={limit} 로 상위 N개만 수집"""
-    encoded_repo = quote(repo_path, safe="")
-    url = f"{BASE_URL}/projects/{encoded_repo}/tags?n={limit}"
+def gerrit_get(session, path):
+    """Gerrit 인증 API 호출 (/a/ prefix 사용)"""
+    url = f"{BASE_URL}/a{path}"
     print(f"[요청] {url}")
     r = session.get(url, verify=False, timeout=10)
     print(f"  Status: {r.status_code}")
 
+    if r.status_code == 401:
+        print("  [인증 실패] 사용자명/패스워드를 확인해 주세요.")
+        return None
+    if r.status_code == 404:
+        print("  [404] 경로 또는 레포를 찾을 수 없어요.")
+        return None
     if r.status_code != 200:
-        print(f"  실패. Response 일부: {r.text[:300]}")
-        return {}
+        print(f"  [오류] {r.text[:300]}")
+        return None
 
     try:
-        text = strip_xssi_prefix(r.text)
-        data = json.loads(text)
+        return json.loads(strip_xssi(r.text))
     except Exception as e:
-        print(f"  JSON 파싱 실패: {e}. Response 일부:")
-        print(r.text[:500])
-        return {}
+        print(f"  JSON 파싱 실패: {e}")
+        print(f"  Response 일부: {r.text[:300]}")
+        return None
 
+def get_tags(session, repo_path, limit=10):
+    """레포의 태그 상위 N개 조회"""
+    encoded = quote(repo_path, safe="")
+    data = gerrit_get(session, f"/projects/{encoded}/tags?n={limit}")
+    if data is None:
+        return {}
     tags = {}
     for item in data:
         ref = item.get("ref", "")
@@ -100,35 +62,35 @@ def get_tags(session, repo_path, limit=10):
         tag_name = m.group(1) if m else ref
         if tag_name:
             tags[tag_name] = item.get("revision", "")
-
     return tags
 
+def get_tags_by_branch(session, repo_path, branch_name, limit=10):
+    """특정 브랜치 기준으로 태그 필터링 (태그명에 브랜치명 일부가 포함된 경우)"""
+    tags = get_tags(session, repo_path, limit=limit)
+    matched = {k: v for k, v in tags.items() if branch_name.lower() in k.lower()}
+    return tags, matched
+
 if __name__ == "__main__":
-    if not PASSWORD and not SESSION_COOKIE:
-        print("[경고] PASSWORD 또는 SESSION_COOKIE 중 하나는 채워야 해요.")
+    if not PASSWORD:
+        print("[경고] PASSWORD 변수가 비어있어요. 코드 상단에 직접 입력 후 실행하세요.")
     else:
         session = get_session()
 
         print("=" * 60)
-        print(f"  레포지토리: {REPO_PATH}")
+        print(f"  레포: {REPO_PATH}")
+        print(f"  브랜치: {BRANCH_NAME}")
         print("=" * 60)
 
-        branches = get_branch_list(session, REPO_PATH)
-        print(f"\n[브랜치 목록] 총 {len(branches)}개")
-        for name in branches:
-            print(f"  - {name}")
+        tags, matched = get_tags_by_branch(session, REPO_PATH, BRANCH_NAME, limit=TAG_LIMIT)
 
-        tags = get_tags(session, REPO_PATH, limit=10)
         print(f"\n[태그 목록] 상위 {len(tags)}개")
         for name, rev in tags.items():
-            print(f"  - {name}  (revision: {rev})")
+            print(f"  - {name}  ({rev[:10]}...)")
 
-        keyword = input("\n확인할 키워드(브랜치명 일부 등) 입력: ").strip()
-        if keyword:
-            matched = [t for t in tags if keyword.lower() in t.lower()]
-            if matched:
-                print(f"\n✅ '{keyword}' 포함 태그 {len(matched)}개 발견:")
-                for m in matched:
-                    print(f"  - {m}")
-            else:
-                print(f"\n❌ '{keyword}' 포함된 태그 없음 — 태깅 안 된 것으로 보여요.")
+        print(f"\n[브랜치 '{BRANCH_NAME}' 관련 태그] {len(matched)}개")
+        if matched:
+            print("  ✅ 태깅 되어 있음:")
+            for name, rev in matched.items():
+                print(f"     - {name}  ({rev[:10]}...)")
+        else:
+            print("  ❌ 해당 브랜치 관련 태그 없음")

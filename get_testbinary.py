@@ -35,7 +35,37 @@ def get_testpipeline():
         print(f"  [오류] {e}")
     return None
 
+def get_binary():
+    # 1) 테스트 파이프라인 정보에서 request_run_id 획득
+    data = get_testpipeline()
+    if not data:
+        print("  [중단] 파이프라인 데이터를 받지 못했어요.")
+        return None
+
+    request_run_id = data[0]["request_run_id"]
+    print(f"\n  request_run_id: {request_run_id}")
+
+    # 2) detail/status 로 바이너리(웹다브) 상세 정보 조회
+    url = f"{BASE_URL}{'/api/detail/status/'}{PROJECT}{'/test-pipeline/'}{request_run_id}"
+    print(f"\n[GET] {url}")
+    try:
+        r = requests.get(url, headers=get_headers(), verify=False, timeout=10)
+        print(f"  Status : {r.status_code}")
+        try:
+            detail = r.json()
+            print(f"Response: detail[0] \n{detail[0]}")
+            return detail
+        except:
+            print(f"  Response (text): {r.text[:500]}")
+            return None
+    except requests.exceptions.ConnectionError as e:
+        print(f"  [연결 오류] {e}")
+    except Exception as e:
+        print(f"  [오류] {e}")
+    return None
+
+
 if __name__ == "__main__":
     import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    test = get_testpipeline()
+    binary = get_binary()

@@ -67,6 +67,21 @@ def get_commit_of_tag(tag):
 def get_all_tag_commit_map():
     """전체 태그 -> 커밋 SHA 매핑 (커밋 기준으로 다른 태그를 찾기 위해 필요).
     annotated 태그는 ^{}(실제 커밋) 우선.
+
+    [왜 전체 태그를 다시 받아서 비교하나? — 나중에 또 궁금해할까봐 기록]
+    get_commit_of_tag() 로 기준 태그의 커밋 SHA는 이미 알아냈다.
+    그런데 "그 SHA를 가리키는 '다른' 태그가 있는지" 확인하려면,
+    결국 다른 태그들이 각각 어떤 커밋을 가리키는지 알아야 SHA를 비교할 수 있다.
+
+    문제는 git ls-remote 가 'ref 이름(패턴)'으로만 서버 필터링이 되고,
+    '커밋 SHA가 이것인 ref만 줘' 같은 역방향 조회는 지원하지 않는다는 점이다.
+    (git 프로토콜은 태그->커밋 방향으로만 조회 가능. 커밋->태그는 불가)
+    그래서 전체 태그의 커밋 매핑을 받아 클라이언트에서 뒤집어 비교하는 구조가 됐다.
+
+    즉 성능 때문이 아니라 git ls-remote 의 한계 때문이다.
+    태그 수가 아주 많지 않으면 이 방식으로 충분히 빠르다.
+    만약 커밋->태그를 서버에서 바로 하고 싶다면 Gerrit 전용 SSH 명령
+    (예: ssh -p PORT user@host gerrit query commit:<SHA>)을 써야 한다.
     """
     cmd = ["git", "ls-remote", "--tags", REMOTE]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=90)

@@ -178,12 +178,14 @@ def get_binary():
         webdav_dir_url += "/"
     print(f"\n  WebDAV 디렉토리: {webdav_dir_url}")
 
-    # 4) image_path 중간의 다섯자리 숫자로 저장 폴더명 결정
+    # 4) 저장 폴더 결정: 다섯자리숫자 / project_image_path의 마지막 폴더명
     m = re.search(r"/(\d{5})/", image_path)
     if not m:
         print(f"  [오류] image_path에서 다섯자리 숫자 폴더를 찾지 못했어요: {image_path}")
         return None
-    save_dir = m.group(1)
+    num_dir = m.group(1)
+    last_dir = os.path.basename(image_path.rstrip("/"))  # 경로 마지막 폴더명
+    save_dir = os.path.join(num_dir, last_dir)
     os.makedirs(save_dir, exist_ok=True)
     print(f"  저장 폴더: ./{save_dir}/")
 

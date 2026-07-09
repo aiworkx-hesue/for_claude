@@ -13,7 +13,7 @@
 [사전 준비] Gerrit SSH 키 생성 및 등록 (PC마다 최초 1회만)
   - is_tested_binary() 사용 시 필요
 ============================================================
-1) ssh-keygen -t ed25519 -C "twitch.kim.partner.samsung.com"   (전부 엔터)
+1) ssh-keygen -t ed25519 -C "사용자명"   (전부 엔터)
 2) cat ~/.ssh/id_ed25519.pub                                   (전체 복사)
 3) Gerrit 웹 > Settings > SSH Keys > 붙여넣기 > Add New SSH Key
 4) ssh -p 29414 <USERNAME>@10.166.211.148 gerrit version
@@ -42,9 +42,9 @@ WEBDAV_PASS = "share"  # WebDAV 패스워드
 GERRIT_HOST = "10.166.211.148"
 GERRIT_SSH_PORT = 29414
 USERNAME = ""
-REPO_PATH = "Automotive/DBIO/v9/idcevo-manifest"
+REPO_PATH = ""  # 태깅 Repo
 
-BRANCH_NAME = "exynosauto9_sop28_stable_scarthgap_6.6-b_15-6.6"  # 브랜치명(전체)
+BRANCH_NAME = ""  # 브랜치명(전체)
 BRANCH_TAG_STRIP = "exynosauto9_"  # 태그명 조합 시 브랜치명 맨 앞에서 제거할 접두어
 # ==========================================
 

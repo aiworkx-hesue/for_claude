@@ -24,7 +24,7 @@ import sys
 # ========== 설정 ==========
 GERRIT_HOST = "10.166.211.148"
 GERRIT_SSH_PORT = 29414
-USERNAME = "twitch.kim.partner.samsung.com"
+USERNAME = ""
 REPO_PATH = "Automotive/DBIO/v9/idcevo-manifest"
 
 PREFIX = "IR260707_125629"   # IR<날짜>_<시간> 부분

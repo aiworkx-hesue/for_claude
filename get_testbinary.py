@@ -135,14 +135,26 @@ def download_webdav_file(file_url, save_path):
     return True
 
 def get_binary():
-    # 1) 테스트 파이프라인 정보에서 request_run_id 획득
+    # 1) 테스트 파이프라인 정보 획득 후, test_status가 FAIL/PASS인 첫 항목 선택
     data = get_testpipeline()
     if not data:
         print("  [중단] 파이프라인 데이터를 받지 못했어요.")
         return None
 
-    request_run_id = data[0]["request_run_id"]
-    print(f"\n  request_run_id: {request_run_id}")
+    selected = None
+    for item in data:
+        if item.get("test_status") in ("FAIL", "PASS"):
+            selected = item
+            break
+
+    if selected is None:
+        print("  [중단] test_status가 FAIL 또는 PASS인 항목이 없어요.")
+        print(f"  test_status 목록: {[d.get('test_status') for d in data]}")
+        return None
+
+    request_run_id = selected["request_run_id"]
+    print(f"\n  선택된 test_status: {selected.get('test_status')}")
+    print(f"  request_run_id: {request_run_id}")
 
     # 2) detail/status 로 바이너리(웹다브) 상세 정보 조회
     url = f"{BASE_URL}{'/api/detail/status/'}{PROJECT}{'/test-pipeline/'}{request_run_id}"

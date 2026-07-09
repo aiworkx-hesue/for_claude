@@ -109,7 +109,12 @@ def get_all_tag_commit_map():
         tag_commit[name] = peeled.get(name, sha)
     return tag_commit
 
-def main():
+def is_tested_binary():
+    """기준 태그가 가리키는 커밋에 '다른 태그'가 더 있으면 True, 아니면 False.
+
+    다른 태그가 더 있다 = 이미 다른 시점/조합으로 태깅(=테스트)된 바이너리로 볼 수 있음.
+    태그가 기준 태그 하나뿐 = 아직 다른 태그가 없음.
+    """
     prefix = sys.argv[1] if len(sys.argv) > 1 else PREFIX
     branch = sys.argv[2] if len(sys.argv) > 2 else BRANCH_NAME
 
@@ -125,7 +130,7 @@ def main():
     target_sha = get_commit_of_tag(target_tag)
     if not target_sha:
         print(f"\n❌ 태그 '{target_tag}' 을 찾을 수 없어요. PREFIX/브랜치명을 확인해 주세요.")
-        return
+        return False
     print(f"\n  '{target_tag}' 이 가리키는 커밋: {target_sha}")
 
     # 2) 같은 커밋을 가리키는 다른 태그 찾기
@@ -140,8 +145,11 @@ def main():
         print(f"\n  ⚠️ 같은 커밋({target_sha[:10]})에 다른 태그 {len(same_commit)}개가 더 있어요:")
         for t in sorted(same_commit):
             print(f"     - {t}")
+        return True
     else:
         print(f"\n  ✅ 이 커밋에는 '{target_tag}' 태그 하나만 달려 있어요.")
+        return False
 
 if __name__ == "__main__":
-    main()
+    result = is_tested_binary()
+    print(f"\n  is_tested_binary() = {result}")

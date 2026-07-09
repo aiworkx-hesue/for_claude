@@ -25,7 +25,6 @@ import requests
 import json
 import os
 import re
-import sys
 import subprocess
 from urllib.parse import urljoin, unquote, urlparse
 from xml.etree import ElementTree
@@ -45,7 +44,6 @@ GERRIT_SSH_PORT = 29414
 USERNAME = ""
 REPO_PATH = "Automotive/DBIO/v9/idcevo-manifest"
 
-PREFIX = "IR260707_125629"   # IR<날짜>_<시간> 부분
 BRANCH_NAME = "exynosauto9_sop28_stable_scarthgap_6.6-b_15-6.6"  # 브랜치명(전체)
 BRANCH_TAG_STRIP = "exynosauto9_"  # 태그명 조합 시 브랜치명 맨 앞에서 제거할 접두어
 # ==========================================
@@ -132,15 +130,15 @@ def get_all_tag_commit_map():
         tag_commit[name] = peeled.get(name, sha)
     return tag_commit
 
-def is_tested_binary():
+def is_tested_binary(prefix, branch=BRANCH_NAME):
     """기준 태그가 가리키는 커밋에 '다른 태그'가 더 있으면 True, 아니면 False.
+
+    prefix : IR<날짜>_<시간> 부분 (예: IR260707_125629)
+    branch : 브랜치명(전체). 기본값은 설정의 BRANCH_NAME.
 
     다른 태그가 더 있다 = 이미 다른 시점/조합으로 태깅(=테스트)된 바이너리로 볼 수 있음.
     태그가 기준 태그 하나뿐 = 아직 다른 태그가 없음.
     """
-    prefix = sys.argv[1] if len(sys.argv) > 1 else PREFIX
-    branch = sys.argv[2] if len(sys.argv) > 2 else BRANCH_NAME
-
     tag_suffix = branch_to_tag_suffix(branch)
     target_tag = f"{prefix}_{tag_suffix}"
 
@@ -152,7 +150,7 @@ def is_tested_binary():
     # 1) 기준 태그가 가리키는 커밋 SHA 조회
     target_sha = get_commit_of_tag(target_tag)
     if not target_sha:
-        print(f"\n❌ 태그 '{target_tag}' 을 찾을 수 없어요. PREFIX/브랜치명을 확인해 주세요.")
+        print(f"\n❌ 태그 '{target_tag}' 을 찾을 수 없어요. prefix/브랜치명을 확인해 주세요.")
         return False
     print(f"\n  '{target_tag}' 이 가리키는 커밋: {target_sha}")
 
@@ -317,6 +315,12 @@ def get_binary():
     request_run_id = selected["request_run_id"]
     print(f"\n  선택된 test_status: {selected.get('test_status')}")
     print(f"  request_run_id: {request_run_id}")
+
+    # 1-1) 이미 테스트된 바이너리인지 확인 (같은 커밋에 다른 태그가 있는지)
+    prefix = selected["tag"]
+    if is_tested_binary(prefix):
+        print("\n이미 테스트되었습니다.")
+        return None
 
     # 2) detail/status 로 바이너리(웹다브) 상세 정보 조회
     url = f"{BASE_URL}{'/api/detail/status/'}{PROJECT}{'/test-pipeline/'}{request_run_id}"

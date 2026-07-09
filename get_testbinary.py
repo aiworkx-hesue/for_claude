@@ -8,6 +8,7 @@ from xml.etree import ElementTree
 # ========== 설정 ==========
 BASE_URL = "https://automotive-cicd.samsungds.net:3090"
 PROJECT = "IDCEVO_SOP28V2"
+PROJECT_BINARY = ""    # detail 항목 중 project 값이 이것과 일치하는 것을 찾음 (실제 값으로 채우세요)
 # 인증이 필요한 경우 아래 설정
 CICD_COOKIE = ""       # 브라우저 쿠키값 (필요시)
 WEBDAV_USER = "share"  # WebDAV 사용자명
@@ -155,9 +156,21 @@ def get_binary():
         print(f"  [오류] {e}")
         return None
 
-    # 3) WebDAV 경로 조합 (file_link + '/' + project_image_path)
-    file_link = detail[0]["file_link"]
-    image_path = detail[0]["project_image_path"]
+    # 3) detail 목록에서 project 값이 PROJECT_BINARY와 일치하는 항목 찾기
+    target = None
+    for item in detail:
+        if item.get("project") == PROJECT_BINARY:
+            target = item
+            break
+
+    if target is None:
+        print(f"  [오류] project == '{PROJECT_BINARY}' 인 항목을 찾지 못했어요.")
+        print(f"  detail 내 project 목록: {[d.get('project') for d in detail]}")
+        return None
+
+    # WebDAV 경로 조합 (file_link + '/' + project_image_path)
+    file_link = target["file_link"]
+    image_path = target["project_image_path"]
     # 사이에 슬래시가 없으면 넣고, 양쪽 다 있으면 중복 제거
     webdav_dir_url = file_link.rstrip("/") + "/" + image_path.lstrip("/")
     # 끝에 / 가 없으면 붙여줌 (디렉토리 조회용)

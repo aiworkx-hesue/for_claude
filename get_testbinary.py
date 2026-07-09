@@ -151,7 +151,7 @@ def is_tested_binary(prefix, branch=BRANCH_NAME):
     target_sha = get_commit_of_tag(target_tag)
     if not target_sha:
         print(f"\n❌ 태그 '{target_tag}' 을 찾을 수 없어요. prefix/브랜치명을 확인해 주세요.")
-        return False
+        return None
     print(f"\n  '{target_tag}' 이 가리키는 커밋: {target_sha}")
 
     # 2) 같은 커밋을 가리키는 다른 태그 찾기
@@ -317,10 +317,18 @@ def get_binary():
     print(f"  request_run_id: {request_run_id}")
 
     # 1-1) 이미 테스트된 바이너리인지 확인 (같은 커밋에 다른 태그가 있는지)
+    #  True  = 다른 태그가 더 있음 → 이미 테스트됨
+    #  False = 해당 태그 하나만 달림 → 다운로드 진행
+    #  None  = 태그 조회 실패 등 오류 → 다운로드하지 않고 중단
     prefix = selected["tag"]
-    if is_tested_binary(prefix):
+    tested = is_tested_binary(prefix)
+    if tested is True:
         print("\n이미 테스트되었습니다.")
         return None
+    if tested is None:
+        print("\n[중단] 태그 확인에 실패해 다운로드를 진행하지 않아요.")
+        return None
+    # 여기까지 왔으면 tested is False → 다운로드 진행
 
     # 2) detail/status 로 바이너리(웹다브) 상세 정보 조회
     url = f"{BASE_URL}{'/api/detail/status/'}{PROJECT}{'/test-pipeline/'}{request_run_id}"

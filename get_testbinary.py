@@ -26,12 +26,15 @@ import json
 import os
 import re
 import subprocess
+import urllib3
 from urllib.parse import urljoin, unquote, urlparse
 from xml.etree import ElementTree
 
+# SSL 인증서 검증 없이(verify=False) 요청하므로 관련 경고를 끈다.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # ========== 설정: CICD / WebDAV ==========
 BASE_URL = "https://automotive-cicd.samsungds.net:3090"
-PROJECT = "IDCEVO_SOP28V2"
 PROJECT_BINARY = ""    # detail 항목 중 project 값이 이것과 일치하는 것을 찾음 (실제 값으로 채우세요)
 # 인증이 필요한 경우 아래 설정
 CICD_COOKIE = ""       # 브라우저 쿠키값 (필요시)
@@ -182,8 +185,8 @@ def get_headers():
         headers["Cookie"] = CICD_COOKIE
     return headers
 
-def get_testpipeline():
-    url = f"{BASE_URL}{'/api/bundle/get_request/'}{PROJECT}{'/TEST-PIPELINE/none'}"
+def get_testpipeline(project):
+    url = f"{BASE_URL}{'/api/bundle/get_request/'}{project}{'/TEST-PIPELINE/none'}"
     print(f"\n[GET] {url}")
     try:
         r = requests.get(url, headers=get_headers(), verify=False, timeout=10)
@@ -294,9 +297,11 @@ def download_webdav_file(file_url, save_path):
     print(f"    [완료] {os.path.basename(save_path)}")
     return True
 
-def get_binary():
+def get_binary(project, board):
+    # board: 나중에 PROJECT_BINARY 값을 정하는 데 사용 예정 (현재 미사용)
+
     # 1) 테스트 파이프라인 정보 획득 후, test_status가 FAIL/PASS인 첫 항목 선택
-    data = get_testpipeline()
+    data = get_testpipeline(project)
     if not data:
         print("  [중단] 파이프라인 데이터를 받지 못했어요.")
         return None
@@ -331,7 +336,7 @@ def get_binary():
     # 여기까지 왔으면 tested is False → 다운로드 진행
 
     # 2) detail/status 로 바이너리(웹다브) 상세 정보 조회
-    url = f"{BASE_URL}{'/api/detail/status/'}{PROJECT}{'/test-pipeline/'}{request_run_id}"
+    url = f"{BASE_URL}{'/api/detail/status/'}{project}{'/test-pipeline/'}{request_run_id}"
     print(f"\n[GET] {url}")
     try:
         r = requests.get(url, headers=get_headers(), verify=False, timeout=10)
@@ -387,9 +392,7 @@ def get_binary():
 # =====================================================================
 
 if __name__ == "__main__":
-    import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-    binary = get_binary()
-    # tested = is_tested_binary()
-    # print(f"\n  is_tested_binary() = {tested}")
+    # 앱(QA_TestManager)에서 아래처럼 호출:
+    #   binary = get_binary(project, board)
+    #   tested = is_tested_binary(prefix)
+    pass

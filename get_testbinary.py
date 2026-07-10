@@ -346,31 +346,6 @@ def get_binary(project, board):
 
     # 3) board 규칙에 맞는 바이너리를 detail에서 찾아 다운로드
     #    (V920은 두 개, 그 외는 한 개)
-    saved = download_binaries_by_board(detail, project, board)
-    print(f"\n  ✅ 다운로드된 폴더 {len(saved)}개: {saved}")
-    return saved
-
-
-def build_project_binaries(project, board):
-    """project와 board로 찾을 PROJECT_BINARY 이름 목록을 만든다.
-
-    규칙: project를 소문자로 바꾼 뒤 board별 접미사를 붙임.
-      V720 -> {project}_la_720            (1개)
-      V820 -> {project}_la_820            (1개)
-      V920 -> {project}_bl_evt2, _la_evt2 (2개)
-    """
-    p = project.lower()
-    mapping = {
-        "V720": [f"{p}_la_720"],
-        "V820": [f"{p}_la_820"],
-        "V920": [f"{p}_bl_evt2", f"{p}_la_evt2"],
-    }
-    return mapping.get(board, [])
-
-def download_binaries_by_board(detail, project, board):
-    """board 규칙에 맞는 PROJECT_BINARY 들을 detail에서 찾아 각각 다운로드.
-    반환: 저장된 폴더 경로 리스트
-    """
     names = build_project_binaries(project, board)
     if not names:
         print(f"  [오류] 알 수 없는 board 값: {board} (V720/V820/V920 중 하나여야 함)")
@@ -397,7 +372,25 @@ def download_binaries_by_board(detail, project, board):
         if result:
             saved.append(result)
 
+    print(f"\n  ✅ 다운로드된 폴더 {len(saved)}개: {saved}")
     return saved
+
+
+def build_project_binaries(project, board):
+    """project와 board로 찾을 PROJECT_BINARY 이름 목록을 만든다.
+
+    규칙: project를 소문자로 바꾼 뒤 board별 접미사를 붙임.
+      V720 -> {project}_la_720            (1개)
+      V820 -> {project}_la_820            (1개)
+      V920 -> {project}_bl_evt2, _la_evt2 (2개)
+    """
+    p = project.lower()
+    mapping = {
+        "V720": [f"{p}_la_720"],
+        "V820": [f"{p}_la_820"],
+        "V920": [f"{p}_bl_evt2", f"{p}_la_evt2"],
+    }
+    return mapping.get(board, [])
 
 def download_binary(target):
     """넘겨받은 target(detail 항목 하나)의 WebDAV 경로에서

@@ -377,13 +377,6 @@ def get_binary(project, board):
 
 
 def build_project_binaries(project, board):
-    """project와 board로 찾을 PROJECT_BINARY 이름 목록을 만든다.
-
-    규칙: project를 소문자로 바꾼 뒤 board별 접미사를 붙임.
-      V720 -> {project}_la_720            (1개)
-      V820 -> {project}_la_820            (1개)
-      V920 -> {project}_bl_evt2, _la_evt2 (2개)
-    """
     p = project.lower()
     mapping = {
         "V720": [f"{p}_la_720"],

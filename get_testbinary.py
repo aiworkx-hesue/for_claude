@@ -35,7 +35,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ========== 설정: CICD / WebDAV ==========
 BASE_URL = "https://automotive-cicd.samsungds.net:3090"
-PROJECT_BINARY = ""    # detail 항목 중 project 값이 이것과 일치하는 것을 찾음 (실제 값으로 채우세요)
 # 인증이 필요한 경우 아래 설정
 CICD_COOKIE = ""       # 브라우저 쿠키값 (필요시)
 WEBDAV_USER = "share"  # WebDAV 사용자명
@@ -298,8 +297,6 @@ def download_webdav_file(file_url, save_path):
     return True
 
 def get_binary(project, board):
-    # board: 나중에 PROJECT_BINARY 값을 정하는 데 사용 예정 (현재 미사용)
-
     # 1) 테스트 파이프라인 정보 획득 후, test_status가 FAIL/PASS인 첫 항목 선택
     data = get_testpipeline(project)
     if not data:
@@ -347,9 +344,60 @@ def get_binary(project, board):
         print(f"  [오류] {e}")
         return None
 
-    # 3) detail 정보로 실제 바이너리 다운로드
-    return download_binary(detail)
+    # 3) board 규칙에 맞는 바이너리를 detail에서 찾아 다운로드
+    #    (V920은 두 개, 그 외는 한 개)
+    saved = download_binaries_by_board(detail, project, board)
+    print(f"\n  ✅ 다운로드된 폴더 {len(saved)}개: {saved}")
+    return saved
 
+
+def build_project_binaries(project, board):
+    """project와 board로 찾을 PROJECT_BINARY 이름 목록을 만든다.
+
+    규칙: project를 소문자로 바꾼 뒤 board별 접미사를 붙임.
+      V720 -> {project}_la_720            (1개)
+      V820 -> {project}_la_820            (1개)
+      V920 -> {project}_bl_evt2, _la_evt2 (2개)
+    """
+    p = project.lower()
+    mapping = {
+        "V720": [f"{p}_la_720"],
+        "V820": [f"{p}_la_820"],
+        "V920": [f"{p}_bl_evt2", f"{p}_la_evt2"],
+    }
+    return mapping.get(board, [])
+
+def download_binaries_by_board(detail, project, board):
+    """board 규칙에 맞는 PROJECT_BINARY 들을 detail에서 찾아 각각 다운로드.
+    반환: 저장된 폴더 경로 리스트
+    """
+    names = build_project_binaries(project, board)
+    if not names:
+        print(f"  [오류] 알 수 없는 board 값: {board} (V720/V820/V920 중 하나여야 함)")
+        return []
+
+    print(f"\n  board={board} → 찾을 PROJECT_BINARY: {names}")
+
+    saved = []
+    for name in names:
+        # detail 목록에서 project 값이 name과 일치하는 항목 찾기
+        target = None
+        for item in detail:
+            if item.get("project") == name:
+                target = item
+                break
+
+        if target is None:
+            print(f"  [경고] project == '{name}' 인 항목을 찾지 못했어요. 건너뜁니다.")
+            print(f"  detail 내 project 목록: {[d.get('project') for d in detail]}")
+            continue
+
+        print(f"\n  === '{name}' 다운로드 ===")
+        result = download_binary(target)
+        if result:
+            saved.append(result)
+
+    return saved
 
 def download_binary(target):
     """넘겨받은 target(detail 항목 하나)의 WebDAV 경로에서

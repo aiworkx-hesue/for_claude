@@ -351,24 +351,12 @@ def get_binary(project, board):
     return download_binary(detail)
 
 
-def download_binary(detail):
-    """detail 목록에서 project == PROJECT_BINARY 인 항목을 찾아,
-    그 WebDAV 경로의 파일들을 (하위 폴더 포함) 다운로드한다.
+def download_binary(target):
+    """넘겨받은 target(detail 항목 하나)의 WebDAV 경로에서
+    파일들을 (하위 폴더 포함) 다운로드한다.
     반환: 저장 폴더 경로 (실패 시 None)
     """
-    # 1) detail 목록에서 project 값이 PROJECT_BINARY와 일치하는 항목 찾기
-    target = None
-    for item in detail:
-        if item.get("project") == PROJECT_BINARY:
-            target = item
-            break
-
-    if target is None:
-        print(f"  [오류] project == '{PROJECT_BINARY}' 인 항목을 찾지 못했어요.")
-        print(f"  detail 내 project 목록: {[d.get('project') for d in detail]}")
-        return None
-
-    # 2) WebDAV 경로 조합 (file_link + '/' + project_image_path)
+    # 1) WebDAV 경로 조합 (file_link + '/' + project_image_path)
     file_link = target["file_link"]
     image_path = target["project_image_path"]
     # 사이에 슬래시가 없으면 넣고, 양쪽 다 있으면 중복 제거
@@ -378,7 +366,7 @@ def download_binary(detail):
         webdav_dir_url += "/"
     print(f"\n  WebDAV 디렉토리: {webdav_dir_url}")
 
-    # 3) 저장 폴더 결정: 다섯자리숫자 / project_image_path의 마지막 폴더명
+    # 2) 저장 폴더 결정: 다섯자리숫자 / project_image_path의 마지막 폴더명
     m = re.search(r"/(\d{5})/", image_path)
     if not m:
         print(f"  [오류] image_path에서 다섯자리 숫자 폴더를 찾지 못했어요: {image_path}")
@@ -389,7 +377,7 @@ def download_binary(detail):
     os.makedirs(save_dir, exist_ok=True)
     print(f"  저장 폴더: ./{save_dir}/")
 
-    # 4) 디렉토리 내 모든 파일/폴더를 재귀적으로 다운로드
+    # 3) 디렉토리 내 모든 파일/폴더를 재귀적으로 다운로드
     print(f"\n  다운로드 시작 (하위 폴더 포함):")
     success = download_webdav_recursive(webdav_dir_url, save_dir)
     print(f"\n  ✅ 총 {success}개 파일 다운로드 완료 → ./{save_dir}/")
